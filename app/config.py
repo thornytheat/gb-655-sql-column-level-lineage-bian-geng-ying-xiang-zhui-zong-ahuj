@@ -95,6 +95,9 @@ WINDOW_SEMANTICS = "[start, end)"
 # 影响面最多展开层数，防止异常登记把页面拖死
 MAX_IMPACT_DEPTH = 8
 
+# 一张补正单最多补多少条隔离项
+MAX_AMENDMENT_ITEMS = 64
+
 
 def resolve_sample(name: str) -> Path:
     """把样例文件名限定在 sample_data/ 内，拒绝穿越与绝对路径。"""

@@ -8,7 +8,7 @@
 
 | 模块 | 使用者动作 | 入口 | 核心文件 | 测试 |
 |---|---|---|---|---|
-| M1 元数据采信 | 采信 DDL 或 JSON 元数据，看逐行诊断与隔离区 | POST /api/schemas/import | `app/modules/m1_intake/handler.py` `app/modules/m1_intake/service.py` `app/modules/m1_intake/reader.py` `app/modules/m1_intake/ddl.py` `app/modules/m1_intake/sheet.py` | `tests/test_m1_intake.py` |
+| M1 元数据采信 | 采信 DDL 或 JSON 元数据，看逐行诊断与隔离区 | POST /api/schemas/import | `app/modules/m1_intake/handler.py` `app/modules/m1_intake/service.py` `app/modules/m1_intake/reader.py` `app/modules/m1_intake/ddl.py` `app/modules/m1_intake/sheet.py` `app/modules/m1_intake/amend.py` | `tests/test_m1_intake.py` `tests/test_m1_amend.py` |
 | M2 类型格 | 查类型格的值域与刻度，或直接比两个类型写法 | GET /api/types | `app/modules/m2_types/handler.py` `app/modules/m2_types/service.py` `app/modules/m2_types/coerce.py` `app/modules/m2_types/range.py` `app/modules/m2_types/lattice.py` | `tests/test_m2_types.py` |
 | M3 兼容判定 | 对一对版本做读者 / 写者两向判定 | POST /api/compat | `app/modules/m3_compat/handler.py` `app/modules/m3_compat/service.py` `app/modules/m3_compat/judge.py` `app/modules/m3_compat/direction.py` `app/modules/m3_compat/priority.py` | `tests/test_m3_compat.py` |
 | M4 字段映射 | 看旧名到新名的映射、别名 SQL、冲突项 | GET /api/mapping | `app/modules/m4_mapping/handler.py` `app/modules/m4_mapping/service.py` `app/modules/m4_mapping/mapping.py` `app/modules/m4_mapping/sqlalias.py` `app/modules/m4_mapping/rename.py` | `tests/test_m4_mapping.py` |
@@ -30,6 +30,9 @@
 | TRAP-22 | 同一字段被连续改过两次名 | 只认最近一跳，最早的名字解析不到 | 跨版本改名链一路解析到底 | `app/modules/m4_mapping/rename.py` | `tests/test_m4_mapping.py::test_trap22_alias_chain_resolves_multi_hop` |
 | TRAP-25 | 两个版本生效区间重叠 | 取到哪版看运气 | 半开区间比较，重叠直接标记警告 | `app/modules/m6_batches/window.py` | `tests/test_m6_batches.py::test_trap25_overlap_flagged_but_adjacent_clean` |
 | TRAP-26 | 基于旧版本号提交 | 后提交无条件覆盖新结果 | 版本号乐观锁，基线落后即 409 | `app/modules/m6_batches/guard.py` | `tests/test_m6_batches.py::test_trap26_stale_submission_rejected` |
+| TRAP-27 | 隔离列只能改文件重导，已采信列被重做 | 重导整份文件，已采信列跟着变，历史迁移单漂移 | 按隔离项补正，已采信列不可覆盖，修订版按 schema_id 显式选用 | `app/modules/m1_intake/amend.py` | `tests/test_m1_amend.py::test_conflict_does_not_overwrite_adopted_column` |
+| TRAP-28 | 两个并发补正叠在同一基线 | 后写的覆盖先写的，修订序号撞车 | 修订序号在 BEGIN IMMEDIATE 事务里现取，基线过期即 409 | `app/store.py` `app/modules/m1_intake/amend.py` | `tests/test_m1_amend.py::test_stale_revision_submission_rejected` |
+| TRAP-29 | 补正处理中途失败 | 重试时已采纳的项被重复采信 | 补正单落库，续跑跳过已终结项 | `app/modules/m1_intake/amend.py` | `tests/test_m1_amend.py::test_resume_only_processes_unfinished_items` |
 
 ## 对账规则
 
@@ -37,6 +40,7 @@
 - 字段账：新版本 = 未变 + 改名 + 换类型 + 改必填 + 冲突 + 新增
 - 引用账：登记引用 = 可达 + 断链，其中可达 = 直接 + 经别名
 - 采信账：列定义行 = 接受字段 + 阻断行
+- 补正账：补正单项数 = 已补正 + 已拒绝 + 保留隔离 + 待处理
 - 页面上四账并列显示，差额不为 0 即判不平
 
 ## 已知不覆盖
@@ -45,4 +49,6 @@
 - DDL 只解析 `CREATE TABLE` 的列定义，不处理分区、约束、索引与 `ALTER`。
 - 类型格只覆盖数值、字符、时间、布尔四族；映射表、数组、结构体一律算 `unknown`，保守判破坏。
 - 生效区间重叠只标记不阻断，最终以版本序号为准。
+- 补正只覆盖列定义类隔离项；`TABLE_UNPARSED`、编码与空输入类问题仍需修文件。
+- 补正不改文件字节：修订版与原版共用同一个 `source_sha256`，靠 `revision_seq` 区分。
 - 打印页脚用 `counter(page)`，Chrome 打印预览不渲染该计数。

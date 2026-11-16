@@ -64,6 +64,29 @@
 - 逻辑行按 `\n` 切分并去掉行尾 `\r`，行号从 1 开始，保留原始行号。
 - 阻断行（列定义损坏、重复列、重复身份）不进判定，提示行（派生身份、未知类型、编码回退）照常参算。
 - 空文件、仅表头、全空行都返回 `EMPTY_INPUT` 提示，不当作成功采信。
+- 每条诊断带 `item_id`，只由快照编号与诊断内容派生，同一份输入重放不换号。
+
+## 6.1 隔离项补正与重放
+
+- `amendment`：一张补正单，`amendment_key = sha256(基线 schema_id + 规范化后的补正项)`；
+  同一份内容重试命中同一张单，不再采信第二次。
+- `root_schema_id`：修订链的起点（原采信版本）；`base_schema_id`：本次补正直接叠在上面的一版。
+- `revision_seq`：修订序号，原采信为 0，每叠一版加 1；`schema_id` 仍由规范化的字段清单派生。
+- 只有 `LINE_MALFORMED` / `DUPLICATE_COLUMN` / `FIELD_ID_DUP` 三类隔离项可补正；
+  `BOM_STRIPPED` / `ENCODING_FALLBACK` 等说明行随修订版照带，不需要补。
+- 补正项字段：`item_id`、`action`（`amend` / `keep`）、`table`、`column`、`type`、`required`、`field_id`。
+- 补正后重新校验：列名、类型必须齐备，类型必须在类型格内，身份必须是合法字符串；
+  不通过即 `AMENDMENT_INCOMPLETE` 或 `AMENDMENT_REJECTED`，原隔离项留在修订版隔离区。
+- 已采信列是既成事实：补正与已采信列撞名（`DUPLICATE_COLUMN`）或撞身份（`FIELD_ID_DUP`）时整项拒绝，
+  修订版字段清单里那条已采信列一个字节都不改。
+- 补正单状态：`applied`（全采纳）、`partial`（部分采纳、其余仍隔离）、`skipped`（全部保留隔离）、
+  `rejected`（没有可采纳项）、`pending`（有未处理项）、`failed`（处理中失败，可续跑）。
+- 续跑只处理未完成项；已采纳的项按原输入接回修订版，不重复写快照。
+- 并发补正：提交可带 `expected_revision_seq` / `expected_schema_id`；基线已变即 409 `REVISION_STALE`。
+  落库在 `BEGIN IMMEDIATE` 事务里现取修订序号，两个并发补正不会拿到同一序号。
+- 修订版不自动生效：新批次必须在 `POST /api/runs` 里显式给 `old_schema_id` / `new_schema_id` / `base_schema_id`。
+  不带这些参数时仍按文件重新采信。历史批次保存自己的 `fields_old` / `fields_new` / `quarantine`，
+  历史迁移单和引用账按生成时的快照导出，不随修订变化。
 
 ## 7 原因码
 

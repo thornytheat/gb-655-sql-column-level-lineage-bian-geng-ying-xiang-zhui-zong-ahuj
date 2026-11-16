@@ -13,6 +13,7 @@ router = APIRouter()
 ALLOWED_KEYS = {
     "old_file", "new_file", "refs_file", "base_file", "base_version_seq",
     "effective_from", "effective_to", "params",
+    "old_schema_id", "new_schema_id", "base_schema_id",
 }
 
 
@@ -20,6 +21,7 @@ ALLOWED_KEYS = {
 def batches_page(request: Request):
     run = store.latest_run()
     runs = history.listing()
+    revisions = service.revision_options()
     return web.page_or_404(
         request,
         "batches.html",
@@ -29,6 +31,8 @@ def batches_page(request: Request):
         ledger=(run or {}).get("ledger") or {},
         reconcile=history.reconcile(run) if run else {},
         current_seq=store.current_version_seq(),
+        revisions=revisions,
+        latest_map=store.latest_revision_map(),
     )
 
 
@@ -53,6 +57,9 @@ def create_run(payload: dict | None = None):
         effective_from=body.get("effective_from"),
         effective_to=body.get("effective_to"),
         params=params,
+        old_schema_id=body.get("old_schema_id"),
+        new_schema_id=body.get("new_schema_id"),
+        base_schema_id=body.get("base_schema_id"),
     )
     return {
         "run_id": run["run_id"],
@@ -62,6 +69,7 @@ def create_run(payload: dict | None = None):
         "balanced": (run.get("ledger") or {}).get("balanced") or {},
         "warnings": run.get("warnings") or [],
         "window": run.get("window") or {},
+        "schema_refs": run.get("schema_refs") or {},
     }
 
 

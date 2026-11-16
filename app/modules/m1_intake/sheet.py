@@ -112,10 +112,126 @@ def _is_known_type(type_raw: str) -> bool:
     )
 
 
-def fold_columns(columns: list[dict], version_label: str, source: str) -> dict:
-    """把原始列折叠成可用的字段清单，并留下每条诊断。"""
+def _fold_one(column: dict, seen_name: dict[tuple[str, str], dict],
+              seen_id: dict[str, dict]) -> tuple[dict | None, list[dict]]:
+    """校验单个列定义：返回（可接受字段, 诊断行）。
+
+    seen_name/seen_id 是已经接受的字段索引；命中重复就不产出字段，
+    由调用方决定这行是「原文件里的重复行」还是「补正后仍然冲突」。
+    """
     from app.modules.m1_intake.ddl import detect_required_token
 
+    diagnostics: list[dict] = []
+    table = (column.get("table") or "").strip()
+    name = (column.get("name") or "").strip()
+    name_key = name.lower()
+
+    if not name:
+        diagnostics.append(
+            {
+                "line": column["line"],
+                "table": table,
+                "column": "",
+                "reason": "LINE_MALFORMED",
+                "blocking": True,
+                "detail": "缺少列名",
+                "raw": column.get("raw") or "",
+            }
+        )
+        return None, diagnostics
+
+    key = (table.lower(), name_key)
+    if key in seen_name:
+        kept = seen_name[key]
+        diagnostics.append(
+            {
+                "line": column["line"],
+                "table": table,
+                "column": name,
+                "reason": "DUPLICATE_COLUMN",
+                "blocking": True,
+                "detail": f"已在第 {kept['line']} 行出现",
+                "raw": f"{table}.{name}",
+            }
+        )
+        return None, diagnostics
+
+    field_id = column.get("field_id")
+    if field_id:
+        field_id = str(field_id)
+        if field_id in seen_id:
+            kept = seen_id[field_id]
+            diagnostics.append(
+                {
+                    "line": column["line"],
+                    "table": table,
+                    "column": name,
+                    "reason": "FIELD_ID_DUP",
+                    "blocking": True,
+                    "detail": f"身份已在 {kept['table']}.{kept['name']} 使用",
+                    "raw": f"{field_id}",
+                }
+            )
+            return None, diagnostics
+    else:
+        field_id = derive_field_id(table, name)
+        diagnostics.append(
+            {
+                "line": column["line"],
+                "table": table,
+                "column": name,
+                "reason": "FIELD_ID_DERIVED",
+                "blocking": False,
+                "detail": field_id,
+                "raw": f"{table}.{name}",
+            }
+        )
+
+    required = detect_required_token(column.get("required"))
+    if required is None:
+        required = False
+        diagnostics.append(
+            {
+                "line": column["line"],
+                "table": table,
+                "column": name,
+                "reason": "REQUIRED_TOKEN_UNKNOWN",
+                "blocking": False,
+                "detail": repr(column.get("required")),
+                "raw": f"{table}.{name}",
+            }
+        )
+
+    type_raw = (column.get("type_raw") or "unknown").strip()
+    if not _is_known_type(type_raw):
+        diagnostics.append(
+            {
+                "line": column["line"],
+                "table": table,
+                "column": name,
+                "reason": "UNKNOWN_TYPE",
+                "blocking": False,
+                "detail": type_raw,
+                "raw": f"{table}.{name}",
+            }
+        )
+
+    field = {
+        "field_id": field_id,
+        "table": table,
+        "name": name,
+        "name_key": name_key,
+        "type_raw": type_raw,
+        "required": bool(required),
+        "line": int(column["line"]),
+        "version": column.get("version") or "",
+        "source": column.get("source") or "",
+    }
+    return field, diagnostics
+
+
+def fold_columns(columns: list[dict], version_label: str, source: str) -> dict:
+    """把原始列折叠成可用的字段清单，并留下每条诊断。"""
     accepted: list[dict] = []
     diagnostics: list[dict] = []
     seen_name: dict[tuple[str, str], dict] = {}
@@ -124,100 +240,15 @@ def fold_columns(columns: list[dict], version_label: str, source: str) -> dict:
 
     for column in sorted(columns, key=lambda item: item["line"]):
         column_lines += 1
-        table = (column.get("table") or "").strip()
-        name = (column.get("name") or "").strip()
-        name_key = name.lower()
-        key = (table.lower(), name_key)
-
-        if key in seen_name:
-            kept = seen_name[key]
-            diagnostics.append(
-                {
-                    "line": column["line"],
-                    "table": table,
-                    "column": name,
-                    "reason": "DUPLICATE_COLUMN",
-                    "blocking": True,
-                    "detail": f"已在第 {kept['line']} 行出现",
-                    "raw": f"{table}.{name}",
-                }
-            )
+        field, found = _fold_one(column, seen_name, seen_id)
+        diagnostics.extend(found)
+        if field is None:
             continue
-
-        field_id = column.get("field_id")
-        if field_id:
-            field_id = str(field_id)
-            if field_id in seen_id:
-                kept = seen_id[field_id]
-                diagnostics.append(
-                    {
-                        "line": column["line"],
-                        "table": table,
-                        "column": name,
-                        "reason": "FIELD_ID_DUP",
-                        "blocking": True,
-                        "detail": f"身份已在 {kept['table']}.{kept['name']} 使用",
-                        "raw": f"{field_id}",
-                    }
-                )
-                continue
-        else:
-            field_id = derive_field_id(table, name)
-            diagnostics.append(
-                {
-                    "line": column["line"],
-                    "table": table,
-                    "column": name,
-                    "reason": "FIELD_ID_DERIVED",
-                    "blocking": False,
-                    "detail": field_id,
-                    "raw": f"{table}.{name}",
-                }
-            )
-
-        required = detect_required_token(column.get("required"))
-        if required is None:
-            required = False
-            diagnostics.append(
-                {
-                    "line": column["line"],
-                    "table": table,
-                    "column": name,
-                    "reason": "REQUIRED_TOKEN_UNKNOWN",
-                    "blocking": False,
-                    "detail": repr(column.get("required")),
-                    "raw": f"{table}.{name}",
-                }
-            )
-
-        type_raw = (column.get("type_raw") or "unknown").strip()
-        if not _is_known_type(type_raw):
-            diagnostics.append(
-                {
-                    "line": column["line"],
-                    "table": table,
-                    "column": name,
-                    "reason": "UNKNOWN_TYPE",
-                    "blocking": False,
-                    "detail": type_raw,
-                    "raw": f"{table}.{name}",
-                }
-            )
-
-        field = {
-            "field_id": field_id,
-            "table": table,
-            "name": name,
-            "name_key": name_key,
-            "type_raw": type_raw,
-            "required": bool(required),
-            "line": int(column["line"]),
-            "version": version_label,
-            "source": source,
-        }
+        field["version"] = version_label
+        field["source"] = source
         accepted.append(field)
-        seen_name[key] = field
-        seen_id[field_id] = field
+        seen_name[(field["table"].lower(), field["name_key"])] = field
+        seen_id[field["field_id"]] = field
 
     blocked = [row for row in diagnostics if row["blocking"]]
     warnings = [row for row in diagnostics if not row["blocking"]]
@@ -234,13 +265,43 @@ def fold_columns(columns: list[dict], version_label: str, source: str) -> dict:
     }
 
 
+def fold_corrections(base_fields: list[dict], columns: list[dict],
+                     version_label: str, source: str) -> dict:
+    """把补正列折叠到已采信字段上。
+
+    已采信列是既成事实：补正只能把被隔离的行救回来，不能顶掉已有列。
+    所以索引从 base_fields 起步，冲突的补正列原样进隔离区。
+    """
+    accepted: list[dict] = []
+    diagnostics: list[dict] = []
+    seen_name: dict[tuple[str, str], dict] = {}
+    seen_id: dict[str, dict] = {}
+    for field in base_fields:
+        seen_name.setdefault((field["table"].lower(), field["name_key"]), field)
+        seen_id.setdefault(field["field_id"], field)
+
+    for column in sorted(columns, key=lambda item: item["line"]):
+        field, found = _fold_one(column, seen_name, seen_id)
+        diagnostics.extend(found)
+        if field is None:
+            continue
+        field["version"] = version_label
+        field["source"] = source
+        accepted.append(field)
+        seen_name[(field["table"].lower(), field["name_key"])] = field
+        seen_id[field["field_id"]] = field
+
+    return {"fields": accepted, "diagnostics": diagnostics}
+
+
 def diagnostic_csv(rows: list[dict]) -> str:
     """隔离区导出：行号、表、列、原因码、是否阻断、原值。"""
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(["line", "table", "column", "reason", "blocking", "detail", "raw"])
+    writer.writerow(["item_id", "line", "table", "column", "reason", "blocking", "detail", "raw"])
     for row in rows:
         writer.writerow([
+            row.get("item_id", ""),
             row.get("line", 0),
             row.get("table", ""),
             row.get("column", ""),
@@ -250,3 +311,23 @@ def diagnostic_csv(rows: list[dict]) -> str:
             row.get("raw", ""),
         ])
     return buffer.getvalue()
+
+
+def attach_item_ids(schema_id: str, rows: list[dict]) -> list[dict]:
+    """给每条诊断一个稳定的隔离项编号，补正按这个编号回指原隔离原因。
+
+    编号只取决于快照与诊断内容，重放同一份输入不会换号；同一内容出现多次时
+    按出现顺序加后缀，保证每条诊断都有唯一编号。
+    """
+    used: dict[str, int] = {}
+    for row in rows:
+        seed = json.dumps(
+            [schema_id, row.get("line"), row.get("table"), row.get("column"),
+             row.get("reason"), row.get("blocking"), row.get("detail"), row.get("raw")],
+            ensure_ascii=False, sort_keys=False, separators=(",", ":"),
+        )
+        base = "q-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+        count = used.get(base, 0)
+        used[base] = count + 1
+        row["item_id"] = base if count == 0 else f"{base}-{count}"
+    return rows

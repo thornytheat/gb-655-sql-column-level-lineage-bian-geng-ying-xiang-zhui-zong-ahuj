@@ -26,6 +26,14 @@ def summary_of(run: dict) -> dict:
         "balanced": bool(balanced.get("all")),
         "reused": bool(run.get("reused")),
         "warnings": len(run.get("warnings") or []),
+        "schema_refs": {
+            role: {
+                "schema_id": ref.get("schema_id"),
+                "revision_seq": int(ref.get("revision_seq") or 0),
+                "amendment_id": ref.get("amendment_id"),
+            }
+            for role, ref in (run.get("schema_refs") or {}).items()
+        },
     }
 
 

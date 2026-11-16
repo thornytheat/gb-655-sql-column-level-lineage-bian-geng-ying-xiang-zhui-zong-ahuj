@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}采信与补正 · lineageguard{% endblock %}
+{% block body %}
+<section class="doc-section panel">
+  <h1>采信与补正</h1>
+  {% if empty and not snapshot %}
+  <p class="empty">还没有采信结果。</p>
+  {% else %}
+  <p class="lede kpis">
+    文件 <span class="mono">{{ snapshot.source_path or '—' }}</span>
+    版本 <span class="mono">{{ snapshot.version_label or '—' }}</span>
+    修订 <span class="mono">r{{ revision_seq }}</span>
+    采信字段 <span class="mono">{{ snapshot.field_count or 0 }}</span>
+    阻断 <span class="mono">{{ snapshot.blocked_count or 0 }}</span>
+  </p>
+
+  <div class="actions">
+    <form method="get" action="/intake" class="pair">
+      <div><label for="schema-id">采信版本</label>
+        <input id="schema-id" type="text" name="schema_id" value="{{ schema_id or '' }}"
+               placeholder="sch-…" aria-label="采信版本编号"></div>
+      <button type="submit" class="ghost">查看</button>
+    </form>
+    <a class="btn ghost" href="/api/schemas/amendable?schema_id={{ schema_id or '' }}">可补正项 JSON</a>
+    <a class="btn ghost" href="/api/schemas/quarantine?schema_id={{ schema_id or '' }}">隔离区 JSON</a>
+    <span class="flash" data-flash></span>
+  </div>
+
+  {% if current_revision and current_revision.schema_id != snapshot.schema_id %}
+  <p class="lede">同一份文件已有更新的采信版本
+    <a class="mono" href="/intake?schema_id={{ current_revision.schema_id }}">{{ current_revision.schema_id }}</a>
+    （r{{ current_revision.revision_seq }}）。补正基于当前查看的版本，过期提交会被拒绝。</p>
+  {% endif %}
+
+  <h2><span class="clause">1</span>隔离项补正</h2>
+  {% if amendable %}
+  <p class="lede">逐条核对原隔离原因，填写修订内容后提交。已被采信的列不会被覆盖。</p>
+  <div class="wrap-scroll">
+    <table class="amend-table" data-amend-table>
+      <caption>可补正的隔离项<sup class="fn">1</sup></caption>
+      <thead>
+        <tr>
+          <th>隔离项</th><th>行</th><th>表</th><th>列</th><th>原原因</th>
+          <th>修订内容</th><th>动作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in amendable %}
+        {% set s = item.suggestion %}
+        <tr data-item-id="{{ item.item_id }}" data-original-reason="{{ item.reason }}">
+          <td class="name">{{ item.item_id }}</td>
+          <td class="num">{{ item.line }}</td>
+          <td class="name">
+            <input type="text" data-field="table" value="{{ s.table }}" aria-label="表名">
+          </td>
+          <td class="name">
+            <input type="text" data-field="column" value="{{ s.column }}" aria-label="列名">
+          </td>
+          <td class="reason">
+            <span class="code">{{ item.reason|reason }}</span>
+            <span class="truncate" title="{{ item.detail }}">{{ item.detail or '—' }}</span>
+          </td>
+          <td class="name">
+            <input type="text" data-field="type" value="{{ s.type }}" aria-label="类型" placeholder="类型">
+            <input type="text" data-field="required" value="{{ s.required }}" aria-label="必填" placeholder="Y/N" size="4">
+            <input type="text" data-field="field_id" value="{{ s.field_id }}" aria-label="字段身份" placeholder="身份">
+          </td>
+          <td>
+            <select data-field="action" aria-label="动作">
+              <option value="amend">补正</option>
+              <option value="keep">保留隔离</option>
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="actions">
+    <button type="button" data-action="amend" data-schema-id="{{ schema_id }}"
+            data-revision-seq="{{ revision_seq }}">补正并重放</button>
+  </div>
+  <p class="lede">动作选「补正」的项会重放；选「保留隔离」的项原样留在隔离区。</p>
+  {% else %}
+  <p class="empty">没有可补正的隔离项。</p>
+  {% endif %}
+</section>
+
+<section class="doc-section panel">
+  <h2><span class="clause">2</span>重放结果</h2>
+  <div data-amend-result>
+    <p class="empty">提交后在这里显示逐项结果与修订版编号。</p>
+  </div>
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">3</span>采信版本</h2>
+  {% if revisions %}
+  <div class="wrap-scroll">
+    <table>
+      <thead><tr><th>采信版本</th><th class="num">修订</th><th>基线</th><th>补正单</th>
+        <th class="num">字段</th><th class="num">阻断</th><th>生成</th><th>状态</th></tr></thead>
+      <tbody>
+        {% for rev in revisions %}
+        <tr>
+          <td class="name"><a href="/intake?schema_id={{ rev.schema_id }}">{{ rev.schema_id }}</a></td>
+          <td class="num">r{{ rev.revision_seq }}</td>
+          <td class="name">{{ rev.base_schema_id or '—' }}</td>
+          <td class="name">{{ rev.amendment_id or '—' }}</td>
+          <td class="num">{{ rev.field_count }}</td>
+          <td class="num">{{ rev.blocked_count }}</td>
+          <td class="name">{{ rev.created_at|ts }}</td>
+          <td>{% if rev.is_current %}<span class="st st-ok">最新</span>{% else %}<span class="st st-none">历史</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">新批次在版本历史页显式选用某个采信版本；历史迁移单继续引用它生成时的快照。</p>
+  {% else %}
+  <p class="empty">还没有采信版本。</p>
+  {% endif %}
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">4</span>补正记录</h2>
+  {% if recent_amendments %}
+  <div class="wrap-scroll">
+    <table>
+      <thead><tr><th>补正单</th><th>基线</th><th class="num">修订</th><th>状态</th>
+        <th class="num">补正/拒绝/保留</th><th>结果版本</th><th>失败原因</th><th></th></tr></thead>
+      <tbody>
+        {% for item in recent_amendments %}
+        <tr>
+          <td class="name">{{ item.amendment_id }}</td>
+          <td class="name">{{ item.base_schema_id }}（r{{ item.base_revision_seq }}）</td>
+          <td class="num">{% if item.revision_seq %}r{{ item.revision_seq }}{% else %}—{% endif %}</td>
+          <td>{{ item.status|amend_status }}</td>
+          <td class="num">{{ item.summary.amended or 0 }}/{{ item.summary.rejected or 0 }}/{{ item.summary.skipped or 0 }}</td>
+          <td class="name">{{ item.result_schema_id or '—' }}</td>
+          <td class="truncate" title="{{ item.error or '' }}">{{ item.error or '—' }}</td>
+          <td>
+            {% if item.status in ('pending', 'failed') %}
+            <button type="button" class="ghost" data-action="resume"
+                    data-amendment-id="{{ item.amendment_id }}">续跑</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">还没有补正记录。</p>
+  {% endif %}
+</section>
+
+<aside class="notes">
+  <ol class="footnotes">
+    <li id="fn1">补正只救回被隔离的列，已采信列冲突时整项退回隔离区。<a class="back" href="#main">↩</a></li>
+    <li id="fn2">修订版只有新批次显式选用才生效，历史批次与迁移单不变。<a class="back" href="#main">↩</a></li>
+  </ol>
+</aside>
+{% endif %}
+{% endblock %}

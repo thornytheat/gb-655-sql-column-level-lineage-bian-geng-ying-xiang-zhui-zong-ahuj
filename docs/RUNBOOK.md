@@ -19,11 +19,12 @@ docker compose exec -T app python -m pytest -q
 ## 3 主流程
 
 1. 打开 `http://localhost:18214/`，看规格单的字段清单与采信诊断。
-2. `/types` 比较两个类型写法，看读者 / 写者两向结论。
-3. `/mapping` 看旧名到新名、别名 SQL、冲突项。
-4. `/impact` 看受影响节点、环、断链、单边登记。
-5. `/batches` 点「跑一次」，再点「陈旧提交」验证 409。
-6. `/spec` 导出迁移单与三份账目 CSV。
+2. `/intake` 按隔离项补正并重放，核对原隔离原因、修订内容与逐项重放结果。
+3. `/types` 比较两个类型写法，看读者 / 写者两向结论。
+4. `/mapping` 看旧名到新名、别名 SQL、冲突项。
+5. `/impact` 看受影响节点、环、断链、单边登记。
+6. `/batches` 点「跑一次」，再点「陈旧提交」验证 409；需要修订版时在下拉里显式选采信版本。
+7. `/spec` 导出迁移单与三份账目 CSV。
 
 ## 4 重建数据库
 
@@ -42,6 +43,11 @@ docker compose up -d --build
 | POST | `/api/schemas/import` | 采信样例文件，返回快照摘要与诊断 |
 | GET | `/api/schemas/quarantine` | 隔离区 JSON |
 | GET | `/api/schemas/quarantine.csv` | 隔离区 CSV |
+| GET | `/api/schemas/amendable` | 某采信版本可补正的隔离项与预填修订内容 |
+| POST | `/api/schemas/amend` | 按隔离项补正并重放，生成修订版 |
+| GET | `/api/schemas/revisions` | 同一份文件的全部采信版本 |
+| GET | `/api/schemas/amendments` | 补正单记录 |
+| POST | `/api/schemas/amendments/{id}/resume` | 续跑未完成的补正单 |
 | GET | `/api/types` | 类型格与别名表 |
 | POST | `/api/types/compare` | 两个类型写法比较 |
 | POST | `/api/compat` | 一对版本的两向判定 |
@@ -61,6 +67,7 @@ docker compose up -d --build
 | 现象 | 原因 | 处置 |
 |---|---|---|
 | 409 `VERSION_STALE` | 提交带的基线序号落后 | 去掉 `base_version_seq` 或填当前序号 |
+| 409 `REVISION_STALE` | 补正基于已被落下的采信版本 | 刷新 `/intake` 后基于最新修订版重新提交 |
 | 400 `WINDOW_INVERTED` | 生效区间起点不早于终点 | 检查 `effective_from` / `effective_to` |
 | 400 `BAD_INPUT` | 文件名、参数或 JSON 结构不对 | 看返回的 `detail` |
 | 404 `NOT_FOUND` | 还没跑过批次 | 先在 `/batches` 点「跑一次」 |

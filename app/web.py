@@ -19,6 +19,7 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 NAV = [
     {"slug": "index", "href": "/", "label": "规格单"},
+    {"slug": "intake", "href": "/intake", "label": "采信与补正"},
     {"slug": "types", "href": "/types", "label": "类型与兼容"},
     {"slug": "mapping", "href": "/mapping", "label": "字段映射"},
     {"slug": "impact", "href": "/impact", "label": "影响面"},
@@ -73,12 +74,29 @@ def _via(value: str | None) -> str:
     return VIA_LABELS.get(value, value)
 
 
+AMEND_STATUS_LABELS = {
+    "applied": "已应用",
+    "partial": "部分应用",
+    "pending": "待续跑",
+    "failed": "失败",
+    "rejected": "未采纳",
+    "skipped": "保留隔离",
+}
+
+
+def _amend_status(value: str | None) -> str:
+    if not value:
+        return "—"
+    return AMEND_STATUS_LABELS.get(value, value)
+
+
 templates.env.filters["ts"] = _ts
 templates.env.filters["reason"] = _label
 templates.env.filters["sev"] = _sev
 templates.env.filters["narrow"] = _narrow
 templates.env.filters["day"] = _day
 templates.env.filters["via"] = _via
+templates.env.filters["amend_status"] = _amend_status
 
 
 def shell_context(active: str) -> dict:

@@ -19,6 +19,14 @@ CODES: dict[str, tuple[str, str]] = {
     "EMPTY_INPUT": ("没有列定义", "warn"),
     "TABLE_UNPARSED": ("建表语句无法解析", "break"),
     "REQUIRED_TOKEN_UNKNOWN": ("必填记号无法识别", "warn"),
+    # 补正与重放
+    "AMENDMENT_APPLIED": ("补正已应用", "info"),
+    "AMENDMENT_REJECTED": ("补正未通过，保留原采信结果", "warn"),
+    "AMENDMENT_INCOMPLETE": ("补正缺少表名、列名或类型", "break"),
+    "AMENDMENT_TARGET_MISSING": ("补正目标不在隔离区", "break"),
+    "AMENDMENT_REPLAY_FAILED": ("补正重放失败", "break"),
+    "REVISION_STALE": ("补正基线已过期", "break"),
+    "REVISION_PENDING": ("已有补正待续跑", "warn"),
     # 类型格
     "TYPE_SAME": ("类型未变", "info"),
     "TYPE_WIDEN": ("类型放宽", "info"),

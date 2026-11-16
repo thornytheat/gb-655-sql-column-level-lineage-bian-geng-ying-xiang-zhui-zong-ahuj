@@ -154,7 +154,7 @@ button.ghost, .btn.ghost {
 button.ghost:hover, .btn.ghost:hover { background: var(--accent-wash); }
 button:disabled { background: var(--paper-3); border-color: var(--rule); color: var(--ink-faint); cursor: not-allowed; }
 
-input[type="text"], input[type="search"] {
+input[type="text"], input[type="search"], select {
   font-family: var(--font-mono);
   font-size: var(--step-1);
   padding: 6px 9px;
@@ -164,6 +164,11 @@ input[type="text"], input[type="search"] {
   color: var(--ink);
   min-width: 130px;
 }
+
+table.amend-table input[type="text"] { min-width: 0; width: 100%; margin-bottom: 3px; }
+table.amend-table select { min-width: 0; }
+table.amend-table td { min-width: 110px; }
+.pair select { max-width: 30ch; }
 
 .flash {
   min-height: 22px;

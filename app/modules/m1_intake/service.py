@@ -93,8 +93,10 @@ def ingest(rel_name: str) -> dict:
     fields = folded["fields"]
     stats = _stats(diagnostics, len(parsed["columns"]), len(fields),
                    folded["stats"]["tables"])
+    schema_id = _schema_id(version_label, fields)
+    diagnostics = sheet.attach_item_ids(schema_id, diagnostics)
     snapshot = {
-        "schema_id": _schema_id(version_label, fields),
+        "schema_id": schema_id,
         "version_label": version_label,
         "source_path": raw.name,
         "source_sha256": raw.sha256,
@@ -110,10 +112,23 @@ def ingest(rel_name: str) -> dict:
         "stats": stats,
         "field_count": len(fields),
         "blocked_count": stats["blocked"],
+        "root_schema_id": schema_id,
+        "revision_seq": 0,
     }
     store.save_snapshot(snapshot)
     store.save_quarantine(snapshot["schema_id"], diagnostics)
     return snapshot
+
+
+def latest_snapshot() -> dict | None:
+    """最近一次采信产出的快照；没有批次时退回最近落库的快照。"""
+    run = store.latest_run()
+    if run:
+        snapshot = store.load_snapshot(run.get("new_schema_id") or "")
+        if snapshot is not None:
+            return snapshot
+    snapshots = store.list_snapshots(1)
+    return store.load_snapshot(snapshots[0]["schema_id"]) if snapshots else None
 
 
 def quarantine_of(schema_id: str | None) -> list[dict]:

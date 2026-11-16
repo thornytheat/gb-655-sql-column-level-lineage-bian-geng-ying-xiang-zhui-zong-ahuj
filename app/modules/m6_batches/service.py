@@ -35,6 +35,19 @@ def _json_safe(resolution: dict) -> dict:
     return out
 
 
+def _schema_ref(snapshot: dict, rel_name: str | None) -> dict:
+    return {
+        "schema_id": snapshot["schema_id"],
+        "source_path": snapshot.get("source_path"),
+        "file": rel_name,
+        "version_label": snapshot.get("version_label"),
+        "revision_seq": int(snapshot.get("revision_seq") or 0),
+        "root_schema_id": snapshot.get("root_schema_id") or snapshot["schema_id"],
+        "base_schema_id": snapshot.get("base_schema_id"),
+        "amendment_id": snapshot.get("amendment_id"),
+    }
+
+
 def _edges(old_snapshot: dict, new_snapshot: dict, diff: dict,
            base_snapshot: dict | None) -> dict:
     allowed = {row["field_id"] for row in diff["rows"] if row["bucket"] == "renamed"}
@@ -51,10 +64,32 @@ def _edges(old_snapshot: dict, new_snapshot: dict, diff: dict,
     return graph
 
 
+def _resolve_snapshot(rel_name: str, schema_id: str | None) -> dict:
+    """明确选用某个采信版本时按 schema_id 取；否则按文件重新采信。
+
+    历史迁移单引用的快照原样留在库里，批次只挑自己那一版，互不影响。
+    """
+    if not schema_id:
+        return intake.ingest(rel_name)
+    snapshot = store.load_snapshot(str(schema_id))
+    if snapshot is None:
+        raise errors.NotFound("没有这个采信版本", detail={"schema_id": schema_id})
+    path = config.resolve_sample(rel_name) if rel_name else None
+    if path is not None and snapshot.get("source_path") != path.name:
+        raise errors.BadInput(
+            "采信版本与文件名不符",
+            detail={"schema_id": str(schema_id), "file": rel_name,
+                    "source_path": snapshot.get("source_path")},
+        )
+    return snapshot
+
+
 def execute(old_file: str = config.DEFAULT_OLD, new_file: str = config.DEFAULT_NEW,
             refs_file: str = config.DEFAULT_REFS, base_file: str | None = config.BASE_OLD,
             base_version_seq=None, effective_from: str | None = None,
-            effective_to: str | None = None, params: dict | None = None) -> dict:
+            effective_to: str | None = None, params: dict | None = None,
+            old_schema_id: str | None = None, new_schema_id: str | None = None,
+            base_schema_id: str | None = None) -> dict:
     params = dict(params or {})
     old_path = config.resolve_sample(old_file)
     new_path = config.resolve_sample(new_file)
@@ -66,9 +101,10 @@ def execute(old_file: str = config.DEFAULT_OLD, new_file: str = config.DEFAULT_N
         except (errors.NotFound, errors.BadInput):
             base_path = None
 
-    old_snapshot = types.prepare(intake.ingest(old_file))
-    new_snapshot = types.prepare(intake.ingest(new_file))
-    base_snapshot = types.prepare(intake.ingest(base_file)) if base_path else None
+    old_snapshot = types.prepare(_resolve_snapshot(old_file, old_schema_id))
+    new_snapshot = types.prepare(_resolve_snapshot(new_file, new_schema_id))
+    base_snapshot = (types.prepare(_resolve_snapshot(base_file, base_schema_id))
+                     if base_path else None)
     refs = mapping.load_refs(refs_file)
 
     window = window_mod.normalize(effective_from, effective_to,
@@ -81,8 +117,15 @@ def execute(old_file: str = config.DEFAULT_OLD, new_file: str = config.DEFAULT_N
         names["base"] = base_file
     digests = {role: manifest_mod.sha256_file(path) for role, path in sorted(paths.items())}
     window_key = f"{window['from']}..{window['to'] or ''}"
-    key = manifest_mod.batch_key(digests, {"window": window_key, **params},
-                                 config.RULESET_VERSION)
+    # 选中的采信版本进批次键：修订版与原版是两次不同的判定
+    schema_key = {role: value for role, value in
+                  (("old", old_schema_id), ("new", new_schema_id),
+                   ("base", base_schema_id)) if value}
+    key = manifest_mod.batch_key(
+        digests,
+        {"window": window_key, "schemas": schema_key, **params},
+        config.RULESET_VERSION,
+    )
 
     # 陈旧提交先拒：基线落后时，连复用都不该给
     guard.check_stale(base_version_seq, store.current_version_seq())
@@ -129,6 +172,12 @@ def execute(old_file: str = config.DEFAULT_OLD, new_file: str = config.DEFAULT_N
         "fields_new": new_snapshot["fields"],
         "type_stats_old": old_snapshot["type_stats"],
         "type_stats_new": new_snapshot["type_stats"],
+        "schema_refs": {
+            "old": _schema_ref(old_snapshot, old_file),
+            "new": _schema_ref(new_snapshot, new_file),
+            **({"base": _schema_ref(base_snapshot, base_file)}
+               if base_snapshot is not None else {}),
+        },
         "diff": diff["rows"],
         "buckets": diff["buckets"],
         "changes": diff["changes"],
@@ -165,6 +214,45 @@ def ensure_seeded() -> dict | None:
 
 def current_run() -> dict | None:
     return store.latest_run()
+
+
+REVISION_ROLES = (("old", config.DEFAULT_OLD), ("new", config.DEFAULT_NEW),
+                  ("base", config.BASE_OLD))
+
+
+def revision_options() -> dict[str, list[dict]]:
+    """给批次页列出每个角色可选用的采信版本，标出最新修订与当前批次所用版本。"""
+    run = store.latest_run() or {}
+    refs = run.get("schema_refs") or {}
+    out: dict[str, list[dict]] = {}
+    for role, default_file in REVISION_ROLES:
+        rows: list[dict] = []
+        default_path = None
+        try:
+            default_path = config.resolve_sample(default_file).name
+        except (errors.NotFound, errors.BadInput):
+            default_path = None
+        if default_path:
+            stored = store.list_snapshots_for_source(default_path)
+            current = store.latest_revision(default_path)
+            used = (refs.get(role) or {}).get("schema_id")
+            for snapshot in stored:
+                rows.append({
+                    "schema_id": snapshot["schema_id"],
+                    "revision_seq": int(snapshot.get("revision_seq") or 0),
+                    "file": default_file,
+                    "source_path": snapshot.get("source_path"),
+                    "version_label": snapshot.get("version_label"),
+                    "field_count": snapshot.get("field_count"),
+                    "blocked_count": snapshot.get("blocked_count"),
+                    "amendment_id": snapshot.get("amendment_id"),
+                    "is_current": bool(current
+                                       and current["schema_id"] == snapshot["schema_id"]),
+                    "is_selected": used == snapshot["schema_id"],
+                })
+        out[role] = sorted(rows, key=lambda item: (item["revision_seq"],
+                                                   item["schema_id"]))
+    return out
 
 
 def reconcile(run: dict) -> dict:

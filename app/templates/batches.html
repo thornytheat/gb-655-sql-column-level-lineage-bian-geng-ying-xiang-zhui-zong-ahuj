@@ -11,6 +11,31 @@
     <span class="flash" data-flash></span>
   </div>
 
+  <div class="pair" data-run-options>
+    {% for role in ['old', 'new', 'base'] %}
+    {% if revisions.get(role) %}
+    <div>
+      <label for="rev-{{ role }}">{{ role }} 采信版本</label>
+      <select id="rev-{{ role }}" data-role="{{ role }}">
+        <option value="">按文件重新采信</option>
+        {% for item in revisions.get(role) %}
+        <option value="{{ item.schema_id }}"
+                {% if item.is_current and not item.is_selected %}data-current="1"{% endif %}
+                {% if item.is_selected %}selected{% endif %}>
+          {{ item.schema_id }} · r{{ item.revision_seq }} · {{ item.field_count }} 字段 · 阻断 {{ item.blocked_count }}{% if item.is_current %} · 最新{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    {% endfor %}
+    <div>
+      <label>&nbsp;</label>
+      <button type="button" data-action="run-revision">按所选版本跑</button>
+    </div>
+  </div>
+  <p class="lede">只有显式选用修订版的批次才使用补正结果；历史批次与其迁移单继续引用原快照。</p>
+
   {% if runs %}
   <div class="wrap-scroll">
     <table>
@@ -31,7 +56,7 @@
           <td class="num">{{ item.old_total }}/{{ item.new_total }}</td>
           <td class="num">{{ item.breaking }}</td>
           <td class="num">{{ item.refs_broken }}</td>
-          <td>{% if item.balanced %}<span class="st st-ok">平</span>{% else %}<span class="st st-bad">不平</span>{% endif %}</td>
+          <td>{% if item.schema_refs and (item.schema_refs.old.revision_seq or item.schema_refs.new.revision_seq) %}<span class="st st-warn">修订</span>{% elif item.balanced %}<span class="st st-ok">平</span>{% else %}<span class="st st-bad">不平</span>{% endif %}</td>
           <td class="name">{{ item.created_at|day }}</td>
         </tr>
         {% endfor %}
